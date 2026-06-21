@@ -24,6 +24,10 @@ def main() -> None:
     client = get_client(service_role=True)
     prices = fetch_yfinance_closes(TRACKED_SYMBOLS, start=args.start, end=args.end)
     rates = fetch_usd_krw(start=args.start, end=args.end)
+    if prices.empty:
+        print("No ETF price rows were collected. This is usually a temporary yfinance rate limit.")
+    if rates.empty:
+        print("No USD/KRW rows were collected. This is usually a temporary yfinance rate limit.")
     price_count, rate_count = upsert_market_data(client, prices, rates)
     print(f"Upserted {price_count} market price rows and {rate_count} exchange-rate rows.")
 

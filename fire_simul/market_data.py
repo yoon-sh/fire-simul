@@ -1,12 +1,61 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
+import time
 from typing import Iterable
 
 import pandas as pd
 import yfinance as yf
 
 from .config import FX_PAIR, FX_SYMBOL, TRACKED_SYMBOLS
+
+
+def _download_with_retry(
+    ticker: str,
+    start_date: date,
+    end_date: date,
+    attempts: int = 3,
+    delay_seconds: int = 20,
+) -> pd.DataFrame:
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            data = yf.download(
+                tickers=ticker,
+                start=start_date.isoformat(),
+                end=end_date.isoformat(),
+                auto_adjust=False,
+                progress=False,
+                threads=False,
+            )
+            if not data.empty:
+                return data
+            print(f"No data returned for {ticker} on attempt {attempt}.")
+        except Exception as exc:  # yfinance raises different exception classes by version.
+            last_error = exc
+            print(f"Download failed for {ticker} on attempt {attempt}: {exc}")
+        if attempt < attempts:
+            time.sleep(delay_seconds)
+    if last_error:
+        print(f"Giving up on {ticker}: {last_error}")
+    return pd.DataFrame()
+
+
+def _close_series(data: pd.DataFrame, ticker: str) -> pd.Series:
+    if data.empty:
+        return pd.Series(dtype="float64")
+    if isinstance(data.columns, pd.MultiIndex):
+        if (ticker, "Close") in data.columns:
+            return data[(ticker, "Close")].dropna()
+        if ("Close", ticker) in data.columns:
+            return data[("Close", ticker)].dropna()
+    if "Close" in data.columns:
+        close = data["Close"]
+        if isinstance(close, pd.DataFrame):
+            first_column = close.columns[0]
+            return close[first_column].dropna()
+        return close.dropna()
+    return pd.Series(dtype="float64")
 
 
 def fetch_yfinance_closes(
@@ -16,23 +65,10 @@ def fetch_yfinance_closes(
 ) -> pd.DataFrame:
     start_date = pd.to_datetime(start or "2026-06-15").date()
     end_date = pd.to_datetime(end or (date.today() + timedelta(days=1))).date()
-    tickers = list(symbols)
-    data = yf.download(
-        tickers=tickers,
-        start=start_date.isoformat(),
-        end=end_date.isoformat(),
-        auto_adjust=False,
-        progress=False,
-        group_by="ticker",
-        threads=True,
-    )
-
     rows: list[dict[str, object]] = []
-    for symbol in tickers:
-        if len(tickers) == 1:
-            close_series = data["Close"]
-        else:
-            close_series = data[(symbol, "Close")]
+    for symbol in symbols:
+        data = _download_with_retry(symbol, start_date, end_date)
+        close_series = _close_series(data, symbol)
         for trade_date, close in close_series.dropna().items():
             rows.append(
                 {
@@ -49,14 +85,8 @@ def fetch_yfinance_closes(
 def fetch_usd_krw(start: str | date | None = None, end: str | date | None = None) -> pd.DataFrame:
     start_date = pd.to_datetime(start or "2026-06-15").date()
     end_date = pd.to_datetime(end or (date.today() + timedelta(days=1))).date()
-    data = yf.download(
-        tickers=FX_SYMBOL,
-        start=start_date.isoformat(),
-        end=end_date.isoformat(),
-        auto_adjust=False,
-        progress=False,
-    )
-    close = data["Close"].dropna()
+    data = _download_with_retry(FX_SYMBOL, start_date, end_date)
+    close = _close_series(data, FX_SYMBOL)
     return pd.DataFrame(
         [
             {
