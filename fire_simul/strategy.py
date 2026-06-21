@@ -55,14 +55,25 @@ def default_portfolios(couple_initial_assets: int) -> tuple[Portfolio, Portfolio
 def to_market_days(prices: pd.DataFrame, rates: pd.DataFrame | None = None) -> pd.DataFrame:
     if prices.empty:
         return pd.DataFrame()
-    pivot = prices.pivot_table(index="trade_date", columns="symbol", values="close", aggfunc="last")
+    clean_prices = prices.copy()
+    clean_prices["trade_date"] = pd.to_datetime(clean_prices["trade_date"]).dt.date.astype(str)
+    clean_prices["close"] = pd.to_numeric(clean_prices["close"], errors="coerce")
+    source_priority = {"yfinance": 0, "stooq": 1}
+    clean_prices["source_priority"] = clean_prices["source"].map(source_priority).fillna(9)
+    clean_prices = (
+        clean_prices.dropna(subset=["trade_date", "symbol", "close"])
+        .sort_values(["trade_date", "symbol", "source_priority"])
+        .drop_duplicates(["trade_date", "symbol"], keep="first")
+    )
+    pivot = clean_prices.pivot_table(index="trade_date", columns="symbol", values="close", aggfunc="last")
     pivot = pivot.dropna(subset=["TQQQ", "QLD", "SPYM", "BOXX"]).sort_index()
-    pivot["TQQQ_MA200"] = pivot["TQQQ"].rolling(200, min_periods=1).mean()
+    pivot["TQQQ_MA200"] = pivot["TQQQ"].rolling(200, min_periods=200).mean()
     if rates is not None and not rates.empty:
         rate_map = rates.drop_duplicates("rate_date").set_index("rate_date")["rate"]
         pivot["USD_KRW"] = pivot.index.to_series().map(rate_map).ffill().bfill()
     else:
         pivot["USD_KRW"] = 1
+    pivot = pivot.dropna(subset=["TQQQ_MA200"])
     return pivot.reset_index()
 
 
@@ -78,6 +89,8 @@ def _apply_market_drift(portfolio: Portfolio, previous: pd.Series, current: pd.S
 
 def _process_owner(portfolio: Portfolio, previous: pd.Series, current: pd.Series, is_first_trading_day_of_year: bool) -> Portfolio:
     p = replace(portfolio)
+    if pd.isna(previous["TQQQ_MA200"]) or pd.isna(current["TQQQ_MA200"]):
+        return p
     cross_down = previous["TQQQ"] > previous["TQQQ_MA200"] and current["TQQQ"] <= current["TQQQ_MA200"]
     cross_up = previous["TQQQ"] <= previous["TQQQ_MA200"] and current["TQQQ"] > current["TQQQ_MA200"]
 
@@ -133,6 +146,9 @@ def run_streamlit_simulation(prices: pd.DataFrame, rates: pd.DataFrame, couple_i
     market = to_market_days(prices, rates)
     if market.empty:
         return pd.DataFrame()
+    market = market[market["trade_date"] >= START_DATE].reset_index(drop=True)
+    if market.empty:
+        return pd.DataFrame()
 
     self_p, spouse_p = default_portfolios(couple_initial_assets)
     rows: list[dict[str, object]] = []
@@ -153,10 +169,18 @@ def run_streamlit_simulation(prices: pd.DataFrame, rates: pd.DataFrame, couple_i
                 "self_total": round(self_p.total_assets),
                 "spouse_total": round(spouse_p.total_assets),
                 "couple_total": round(self_p.total_assets + spouse_p.total_assets),
+                "tqqq_value": round(self_p.tqqq_value + spouse_p.tqqq_value),
+                "qld_value": round(self_p.qld_value + spouse_p.qld_value),
+                "qld_cash_value": round(self_p.qld_cash_value + spouse_p.qld_cash_value),
+                "spym_value": round(self_p.spym_value + spouse_p.spym_value),
+                "boxx_value": round(self_p.boxx_value + spouse_p.boxx_value),
+                "growth_assets": round(self_p.tqqq_value + spouse_p.tqqq_value + self_p.qld_value + spouse_p.qld_value),
+                "defense_assets": round(self_p.spym_value + spouse_p.spym_value + self_p.boxx_value + spouse_p.boxx_value),
                 "self_boxx": round(self_p.boxx_value),
                 "spouse_boxx": round(spouse_p.boxx_value),
                 "self_withdrawal": round(self_p.cumulative_withdrawal),
                 "spouse_withdrawal": round(spouse_p.cumulative_withdrawal),
+                "couple_withdrawal": round(self_p.cumulative_withdrawal + spouse_p.cumulative_withdrawal),
                 "tqqq_close": current["TQQQ"],
                 "tqqq_ma200": current["TQQQ_MA200"],
             }

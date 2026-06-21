@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -17,9 +15,50 @@ load_dotenv()
 
 st.set_page_config(
     page_title="FIRE 자산운용 시뮬레이터",
-    page_icon="🔥",
+    page_icon="FIRE",
     layout="wide",
 )
+
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background: #0b1020;
+        color: #e5edf7;
+    }
+    [data-testid="stSidebar"] {
+        background: #111827;
+        border-right: 1px solid #263244;
+    }
+    [data-testid="stMetric"] {
+        background: #111827;
+        border: 1px solid #263244;
+        border-radius: 10px;
+        padding: 16px;
+    }
+    [data-testid="stMetricLabel"] {
+        color: #93a4b8;
+    }
+    [data-testid="stMetricValue"] {
+        color: #f8fafc;
+    }
+    h1, h2, h3 {
+        color: #f8fafc;
+    }
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+    }
+    div[data-testid="stDataFrame"] {
+        border: 1px solid #263244;
+        border-radius: 10px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+PLOT_TEMPLATE = "plotly_dark"
 
 
 def won(value: float | int) -> str:
@@ -35,7 +74,7 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 st.title("FIRE 자산운용 시뮬레이터")
-st.caption("Supabase에 저장된 실제 종가 데이터를 읽어 매일 FIRE 가능성을 갱신합니다.")
+st.caption("합산 자산 기준으로 실제 종가 데이터를 반영해 FIRE 가능성을 매일 갱신합니다.")
 
 with st.sidebar:
     st.header("설정")
@@ -45,7 +84,7 @@ with st.sidebar:
         format_func=lambda value: f"{value // 100_000_000}억 원",
         index=1,
     )
-    st.info(f"생활비 인출일은 매월 {MONTHLY_WITHDRAWAL_DAY}일입니다.")
+    st.info(f"생활비 인출일은 매월 {MONTHLY_WITHDRAWAL_DAY}일, 합산 월 인출액은 600만 원입니다.")
     if st.button("데이터 새로고침"):
         st.cache_data.clear()
 
@@ -76,21 +115,55 @@ last = simulation.iloc[-1]
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("최신 거래일", latest or "-")
 col2.metric("부부 합산 총자산", won(last["couple_total"]))
-col3.metric("본인 총자산", won(last["self_total"]))
-col4.metric("아내 총자산", won(last["spouse_total"]))
+col3.metric("성장자산", won(last["growth_assets"]))
+col4.metric("방어자산", won(last["defense_assets"]))
 
 col5, col6, col7 = st.columns(3)
-col5.metric("본인 누적 인출", won(last["self_withdrawal"]))
-col6.metric("아내 누적 인출", won(last["spouse_withdrawal"]))
-col7.metric("월 인출일", f"매월 {MONTHLY_WITHDRAWAL_DAY}일")
+col5.metric("누적 생활비 인출", won(last["couple_withdrawal"]))
+col6.metric("TQQQ 종가", f"{last['tqqq_close']:,.2f}")
+col7.metric("TQQQ 200일선", f"{last['tqqq_ma200']:,.2f}")
 
-st.subheader("총자산 추이")
-asset_chart = simulation[["date", "couple_total", "self_total", "spouse_total"]].melt(
+st.subheader("합산 총자산 추이")
+asset_chart = simulation[["date", "couple_total"]].melt(
     id_vars="date",
     var_name="구분",
     value_name="금액",
 )
-st.plotly_chart(px.line(asset_chart, x="date", y="금액", color="구분"), use_container_width=True)
+fig_total = px.line(asset_chart, x="date", y="금액", color="구분", template=PLOT_TEMPLATE)
+fig_total.update_layout(paper_bgcolor="#0b1020", plot_bgcolor="#111827")
+st.plotly_chart(fig_total, use_container_width=True)
+
+st.subheader("종목별 자산 변화")
+asset_by_symbol = simulation[
+    ["date", "tqqq_value", "qld_value", "qld_cash_value", "spym_value", "boxx_value"]
+].melt(id_vars="date", var_name="자산", value_name="금액")
+name_map = {
+    "tqqq_value": "TQQQ",
+    "qld_value": "QLD",
+    "qld_cash_value": "QLD 대기현금",
+    "spym_value": "SPYM",
+    "boxx_value": "BOXX",
+}
+asset_by_symbol["자산"] = asset_by_symbol["자산"].map(name_map)
+fig_symbols = px.area(asset_by_symbol, x="date", y="금액", color="자산", template=PLOT_TEMPLATE)
+fig_symbols.update_layout(paper_bgcolor="#0b1020", plot_bgcolor="#111827")
+st.plotly_chart(fig_symbols, use_container_width=True)
+
+st.subheader("자산군별 변화")
+asset_group = simulation[["date", "growth_assets", "defense_assets", "qld_cash_value"]].melt(
+    id_vars="date",
+    var_name="자산군",
+    value_name="금액",
+)
+group_map = {
+    "growth_assets": "성장자산(TQQQ+QLD)",
+    "defense_assets": "방어자산(SPYM+BOXX)",
+    "qld_cash_value": "QLD 대기현금",
+}
+asset_group["자산군"] = asset_group["자산군"].map(group_map)
+fig_groups = px.line(asset_group, x="date", y="금액", color="자산군", template=PLOT_TEMPLATE)
+fig_groups.update_layout(paper_bgcolor="#0b1020", plot_bgcolor="#111827")
+st.plotly_chart(fig_groups, use_container_width=True)
 
 st.subheader("TQQQ 종가와 200일선")
 tqqq_chart = simulation[["date", "tqqq_close", "tqqq_ma200"]].melt(
@@ -98,22 +171,31 @@ tqqq_chart = simulation[["date", "tqqq_close", "tqqq_ma200"]].melt(
     var_name="구분",
     value_name="가격",
 )
-st.plotly_chart(px.line(tqqq_chart, x="date", y="가격", color="구분"), use_container_width=True)
+fig_tqqq = px.line(tqqq_chart, x="date", y="가격", color="구분", template=PLOT_TEMPLATE)
+fig_tqqq.update_layout(paper_bgcolor="#0b1020", plot_bgcolor="#111827")
+st.plotly_chart(fig_tqqq, use_container_width=True)
 
 st.subheader("저장된 최신 종가")
 latest_prices = (
-    prices_df.sort_values("trade_date")
+    prices_df.assign(
+        close=pd.to_numeric(prices_df["close"], errors="coerce"),
+        source_priority=prices_df["source"].map({"yfinance": 0, "stooq": 1}).fillna(9),
+    )
+    .sort_values(["trade_date", "symbol", "source_priority"])
+    .drop_duplicates(["trade_date", "symbol"], keep="first")
     .groupby("symbol", as_index=False)
     .tail(1)
     .sort_values("symbol")
 )
+latest_prices = latest_prices.drop(columns=["source_priority"])
 st.dataframe(latest_prices, use_container_width=True, hide_index=True)
 
 with st.expander("운영 메모"):
     st.markdown(
         """
         - 매일 종가 수집은 GitHub Actions가 `scripts/collect_market_data.py`를 실행하는 방식입니다.
-        - 현재 Streamlit 버전의 시뮬레이션은 실제 데이터 연결을 빠르게 확인하기 위한 운영용 초안입니다.
-        - 3일 분할매수와 거래내역 전체 저장은 TypeScript 엔진에 더 정확히 구현되어 있어, 다음 단계에서 Python 엔진에도 동일하게 확장해야 합니다.
+        - 화면은 본인/아내를 나누지 않고 부부 합산 자산만 표시합니다.
+        - TQQQ 200일선은 시작일 이전 데이터까지 포함해 계산하고, 화면에는 2026-06-15 이후만 표시합니다.
+        - 3일 분할매수와 거래내역 전체 저장은 다음 단계에서 Python 엔진에 더 정밀하게 확장해야 합니다.
         """
     )
