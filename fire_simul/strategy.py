@@ -67,13 +67,13 @@ def to_market_days(prices: pd.DataFrame, rates: pd.DataFrame | None = None) -> p
     )
     pivot = clean_prices.pivot_table(index="trade_date", columns="symbol", values="close", aggfunc="last")
     pivot = pivot.dropna(subset=["TQQQ", "QLD", "SPYM", "BOXX"]).sort_index()
-    pivot["TQQQ_MA200"] = pivot["TQQQ"].rolling(200, min_periods=200).mean()
+    pivot["TQQQ_MA200"] = pivot["TQQQ"].rolling(200, min_periods=1).mean()
+    pivot["TQQQ_MA_COUNT"] = pivot["TQQQ"].rolling(200, min_periods=1).count()
     if rates is not None and not rates.empty:
         rate_map = rates.drop_duplicates("rate_date").set_index("rate_date")["rate"]
         pivot["USD_KRW"] = pivot.index.to_series().map(rate_map).ffill().bfill()
     else:
         pivot["USD_KRW"] = 1
-    pivot = pivot.dropna(subset=["TQQQ_MA200"])
     return pivot.reset_index()
 
 
@@ -183,6 +183,7 @@ def run_streamlit_simulation(prices: pd.DataFrame, rates: pd.DataFrame, couple_i
                 "couple_withdrawal": round(self_p.cumulative_withdrawal + spouse_p.cumulative_withdrawal),
                 "tqqq_close": current["TQQQ"],
                 "tqqq_ma200": current["TQQQ_MA200"],
+                "tqqq_ma_count": int(current["TQQQ_MA_COUNT"]),
             }
         )
 

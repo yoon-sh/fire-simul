@@ -23,35 +23,52 @@ st.markdown(
     """
     <style>
     .stApp {
-        background: #0b1020;
-        color: #e5edf7;
+        background: #101827;
+        color: #f3f7fb;
     }
     [data-testid="stSidebar"] {
-        background: #111827;
-        border-right: 1px solid #263244;
+        background: #182235;
+        border-right: 1px solid #334155;
     }
     [data-testid="stMetric"] {
-        background: #111827;
-        border: 1px solid #263244;
+        background: #182235;
+        border: 1px solid #3b4a60;
         border-radius: 10px;
         padding: 16px;
     }
     [data-testid="stMetricLabel"] {
-        color: #93a4b8;
+        color: #c7d2e0;
     }
     [data-testid="stMetricValue"] {
-        color: #f8fafc;
+        color: #ffffff;
     }
     h1, h2, h3 {
-        color: #f8fafc;
+        color: #ffffff;
+    }
+    p, span, label, div {
+        color: inherit;
+    }
+    [data-testid="stMarkdownContainer"] {
+        color: #eef4fb;
+    }
+    [data-baseweb="select"] div {
+        color: #0f172a;
     }
     .block-container {
         padding-top: 2rem;
         padding-bottom: 3rem;
     }
     div[data-testid="stDataFrame"] {
-        border: 1px solid #263244;
+        border: 1px solid #3b4a60;
         border-radius: 10px;
+    }
+    .data-note {
+        background: #182235;
+        border: 1px solid #3b4a60;
+        border-radius: 10px;
+        padding: 12px 14px;
+        color: #dbeafe;
+        line-height: 1.5;
     }
     </style>
     """,
@@ -59,6 +76,8 @@ st.markdown(
 )
 
 PLOT_TEMPLATE = "plotly_dark"
+PLOT_BG = "#182235"
+PAGE_BG = "#101827"
 
 
 def won(value: float | int) -> str:
@@ -106,11 +125,33 @@ if prices_df.empty:
 latest = latest_trade_date(prices_df)
 simulation = run_streamlit_simulation(prices_df, rates_df, scenario)
 
+required_symbols = ["TQQQ", "QLD", "SPYM", "BOXX"]
+coverage = (
+    prices_df[prices_df["symbol"].isin(required_symbols)]
+    .groupby("symbol")
+    .agg(데이터수=("trade_date", "nunique"), 시작일=("trade_date", "min"), 마지막일=("trade_date", "max"))
+    .reindex(required_symbols)
+    .reset_index()
+    .rename(columns={"symbol": "종목"})
+)
+
 if simulation.empty:
-    st.warning("시뮬레이션에 필요한 TQQQ, QLD, SPYM, BOXX 데이터가 충분하지 않습니다.")
+    st.warning("시뮬레이션에 필요한 종목 데이터가 아직 부족합니다. 아래 표에서 비어 있는 종목을 확인하세요.")
+    st.dataframe(coverage, use_container_width=True, hide_index=True)
     st.stop()
 
 last = simulation.iloc[-1]
+
+if last["tqqq_ma_count"] < 200:
+    st.markdown(
+        f"""
+        <div class="data-note">
+        현재 TQQQ 200일선은 저장된 TQQQ 데이터 {int(last["tqqq_ma_count"])}개로 계산한 임시값입니다.
+        GitHub Actions에서 2025-06-01부터 데이터를 다시 수집하면 200거래일 기준에 가까워집니다.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("최신 거래일", latest or "-")
@@ -130,7 +171,7 @@ asset_chart = simulation[["date", "couple_total"]].melt(
     value_name="금액",
 )
 fig_total = px.line(asset_chart, x="date", y="금액", color="구분", template=PLOT_TEMPLATE)
-fig_total.update_layout(paper_bgcolor="#0b1020", plot_bgcolor="#111827")
+fig_total.update_layout(paper_bgcolor=PAGE_BG, plot_bgcolor=PLOT_BG, font_color="#f8fafc")
 st.plotly_chart(fig_total, use_container_width=True)
 
 st.subheader("종목별 자산 변화")
@@ -146,7 +187,7 @@ name_map = {
 }
 asset_by_symbol["자산"] = asset_by_symbol["자산"].map(name_map)
 fig_symbols = px.area(asset_by_symbol, x="date", y="금액", color="자산", template=PLOT_TEMPLATE)
-fig_symbols.update_layout(paper_bgcolor="#0b1020", plot_bgcolor="#111827")
+fig_symbols.update_layout(paper_bgcolor=PAGE_BG, plot_bgcolor=PLOT_BG, font_color="#f8fafc")
 st.plotly_chart(fig_symbols, use_container_width=True)
 
 st.subheader("자산군별 변화")
@@ -162,7 +203,7 @@ group_map = {
 }
 asset_group["자산군"] = asset_group["자산군"].map(group_map)
 fig_groups = px.line(asset_group, x="date", y="금액", color="자산군", template=PLOT_TEMPLATE)
-fig_groups.update_layout(paper_bgcolor="#0b1020", plot_bgcolor="#111827")
+fig_groups.update_layout(paper_bgcolor=PAGE_BG, plot_bgcolor=PLOT_BG, font_color="#f8fafc")
 st.plotly_chart(fig_groups, use_container_width=True)
 
 st.subheader("TQQQ 종가와 200일선")
@@ -172,8 +213,11 @@ tqqq_chart = simulation[["date", "tqqq_close", "tqqq_ma200"]].melt(
     value_name="가격",
 )
 fig_tqqq = px.line(tqqq_chart, x="date", y="가격", color="구분", template=PLOT_TEMPLATE)
-fig_tqqq.update_layout(paper_bgcolor="#0b1020", plot_bgcolor="#111827")
+fig_tqqq.update_layout(paper_bgcolor=PAGE_BG, plot_bgcolor=PLOT_BG, font_color="#f8fafc")
 st.plotly_chart(fig_tqqq, use_container_width=True)
+
+st.subheader("데이터 보유 현황")
+st.dataframe(coverage, use_container_width=True, hide_index=True)
 
 st.subheader("저장된 최신 종가")
 latest_prices = (
