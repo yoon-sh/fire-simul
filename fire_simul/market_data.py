@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from io import StringIO
 import time
 from typing import Iterable
 
 import pandas as pd
+import requests
 import yfinance as yf
 
 from .config import FX_PAIR, FX_SYMBOL, TRACKED_SYMBOLS
@@ -14,8 +16,8 @@ def _download_with_retry(
     ticker: str,
     start_date: date,
     end_date: date,
-    attempts: int = 3,
-    delay_seconds: int = 20,
+    attempts: int = 2,
+    delay_seconds: int = 5,
 ) -> pd.DataFrame:
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
@@ -27,6 +29,7 @@ def _download_with_retry(
                 auto_adjust=False,
                 progress=False,
                 threads=False,
+                timeout=10,
             )
             if not data.empty:
                 return data
@@ -58,6 +61,38 @@ def _close_series(data: pd.DataFrame, ticker: str) -> pd.Series:
     return pd.Series(dtype="float64")
 
 
+def _fetch_stooq_close(symbol: str, start_date: date, end_date: date) -> pd.DataFrame:
+    stooq_symbol = f"{symbol.lower()}.us"
+    url = (
+        "https://stooq.com/q/d/l/"
+        f"?s={stooq_symbol}&d1={start_date:%Y%m%d}&d2={end_date:%Y%m%d}&i=d"
+    )
+    try:
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        data = pd.read_csv(StringIO(response.text))
+    except Exception as exc:
+        print(f"Stooq fallback failed for {symbol}: {exc}")
+        return pd.DataFrame()
+
+    if data.empty or "Date" not in data.columns or "Close" not in data.columns:
+        print(f"Stooq fallback returned no usable rows for {symbol}.")
+        return pd.DataFrame()
+
+    return pd.DataFrame(
+        [
+            {
+                "trade_date": pd.Timestamp(row["Date"]).date().isoformat(),
+                "symbol": symbol,
+                "close": round(float(row["Close"]), 6),
+                "currency": "USD",
+                "source": "stooq",
+            }
+            for _, row in data.dropna(subset=["Date", "Close"]).iterrows()
+        ]
+    )
+
+
 def fetch_yfinance_closes(
     symbols: Iterable[str] = TRACKED_SYMBOLS,
     start: str | date | None = None,
@@ -69,16 +104,20 @@ def fetch_yfinance_closes(
     for symbol in symbols:
         data = _download_with_retry(symbol, start_date, end_date)
         close_series = _close_series(data, symbol)
-        for trade_date, close in close_series.dropna().items():
-            rows.append(
-                {
-                    "trade_date": pd.Timestamp(trade_date).date().isoformat(),
-                    "symbol": symbol,
-                    "close": round(float(close), 6),
-                    "currency": "USD",
-                    "source": "yfinance",
-                }
-            )
+        if close_series.empty:
+            fallback = _fetch_stooq_close(symbol, start_date, end_date)
+            rows.extend(fallback.to_dict(orient="records"))
+        else:
+            for trade_date, close in close_series.dropna().items():
+                rows.append(
+                    {
+                        "trade_date": pd.Timestamp(trade_date).date().isoformat(),
+                        "symbol": symbol,
+                        "close": round(float(close), 6),
+                        "currency": "USD",
+                        "source": "yfinance",
+                    }
+                )
     return pd.DataFrame(rows)
 
 
