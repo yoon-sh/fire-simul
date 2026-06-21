@@ -87,10 +87,16 @@ def _apply_market_drift(portfolio: Portfolio, previous: pd.Series, current: pd.S
     )
 
 
-def _process_owner(portfolio: Portfolio, previous: pd.Series, current: pd.Series, is_first_trading_day_of_year: bool) -> Portfolio:
+def _process_owner(
+    portfolio: Portfolio,
+    previous: pd.Series,
+    current: pd.Series,
+    is_first_trading_day_of_year: bool,
+) -> tuple[Portfolio, list[str]]:
     p = replace(portfolio)
+    events: list[str] = []
     if pd.isna(previous["TQQQ_MA200"]) or pd.isna(current["TQQQ_MA200"]):
-        return p
+        return p, events
     cross_down = previous["TQQQ"] > previous["TQQQ_MA200"] and current["TQQQ"] <= current["TQQQ_MA200"]
     cross_up = previous["TQQQ"] <= previous["TQQQ_MA200"] and current["TQQQ"] > current["TQQQ_MA200"]
 
@@ -100,6 +106,7 @@ def _process_owner(portfolio: Portfolio, previous: pd.Series, current: pd.Series
         p.tqqq_value = 0
         p.qld_value = 0
         p.strategy_state = "EXIT_COMPLETED"
+        events.append("TQQQ 하향 이탈: TQQQ->BOXX, QLD->대기현금")
     elif cross_up:
         available_tqqq = max(p.boxx_value - p.boxx_floor, 0)
         available_qld = p.qld_cash_value
@@ -109,6 +116,8 @@ def _process_owner(portfolio: Portfolio, previous: pd.Series, current: pd.Series
         p.qld_value += available_qld
         # TODO: This Streamlit preview applies re-entry in one day. The TypeScript engine has the exact 3-day split logic.
         p.strategy_state = "ENTRY_VALID"
+        if available_tqqq > 0 or available_qld > 0:
+            events.append("TQQQ 상향 돌파: BOXX 초과분/QLD 대기현금 재진입")
 
     if (
         is_first_trading_day_of_year
@@ -120,6 +129,7 @@ def _process_owner(portfolio: Portfolio, previous: pd.Series, current: pd.Series
         p.tqqq_value -= QLD_ANNUAL_CONTRIBUTION
         p.qld_value += QLD_ANNUAL_CONTRIBUTION
         p.qld_principal += QLD_ANNUAL_CONTRIBUTION
+        events.append("연초 QLD 추가매수")
 
     if (
         p.qld_principal >= QLD_CONTRIBUTION_CAP
@@ -131,15 +141,17 @@ def _process_owner(portfolio: Portfolio, previous: pd.Series, current: pd.Series
         p.qld_value = QLD_RESET_KEEP_VALUE
         p.tqqq_value += move_amount
         p.qld_principal = QLD_RESET_KEEP_VALUE
+        events.append("QLD 정산: 초과분 TQQQ 이동")
 
     current_date = pd.to_datetime(current["trade_date"]).date()
     if current_date.day == MONTHLY_WITHDRAWAL_DAY:
         if p.boxx_value >= p.monthly_withdrawal:
             p.boxx_value -= p.monthly_withdrawal
             p.cumulative_withdrawal += p.monthly_withdrawal
+            events.append("생활비 인출")
         # TODO: Record withdrawal failure rows after transaction persistence is added to the Python path.
 
-    return p
+    return p, events
 
 
 def run_streamlit_simulation(prices: pd.DataFrame, rates: pd.DataFrame, couple_initial_assets: int) -> pd.DataFrame:
@@ -159,9 +171,11 @@ def run_streamlit_simulation(prices: pd.DataFrame, rates: pd.DataFrame, couple_i
             self_p = _apply_market_drift(self_p, previous, current)
             spouse_p = _apply_market_drift(spouse_p, previous, current)
         is_first_trading_day = index > 0 and str(current["trade_date"])[:4] != str(previous["trade_date"])[:4]
+        events: list[str] = []
         if index > 0:
-            self_p = _process_owner(self_p, previous, current, is_first_trading_day)
-            spouse_p = _process_owner(spouse_p, previous, current, is_first_trading_day)
+            self_p, self_events = _process_owner(self_p, previous, current, is_first_trading_day)
+            spouse_p, spouse_events = _process_owner(spouse_p, previous, current, is_first_trading_day)
+            events = sorted(set(self_events + spouse_events))
 
         rows.append(
             {
@@ -184,6 +198,7 @@ def run_streamlit_simulation(prices: pd.DataFrame, rates: pd.DataFrame, couple_i
                 "tqqq_close": current["TQQQ"],
                 "tqqq_ma200": current["TQQQ_MA200"],
                 "tqqq_ma_count": int(current["TQQQ_MA_COUNT"]),
+                "events": ", ".join(events),
             }
         )
 

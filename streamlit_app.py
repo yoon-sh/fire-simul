@@ -5,7 +5,7 @@ import plotly.express as px
 import streamlit as st
 from dotenv import load_dotenv
 
-from fire_simul.config import MONTHLY_WITHDRAWAL_DAY, START_DATE
+from fire_simul.config import MARKET_DATA_START_DATE, MONTHLY_WITHDRAWAL_DAY
 from fire_simul.market_data import latest_trade_date, load_exchange_rates, load_market_prices
 from fire_simul.strategy import run_streamlit_simulation
 from fire_simul.supabase_client import get_client
@@ -53,6 +53,17 @@ st.markdown(
     }
     [data-baseweb="select"] div {
         color: #0f172a;
+    }
+    .stButton > button {
+        background: #e2e8f0;
+        color: #0f172a;
+        border: 1px solid #cbd5e1;
+        font-weight: 700;
+    }
+    .stButton > button:hover {
+        background: #ffffff;
+        color: #0f172a;
+        border-color: #93c5fd;
     }
     .block-container {
         padding-top: 2rem;
@@ -122,8 +133,8 @@ def style_chart(fig):
 @st.cache_data(ttl=600)
 def load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     client = get_client(service_role=False)
-    prices = load_market_prices(client, START_DATE)
-    rates = load_exchange_rates(client, START_DATE)
+    prices = load_market_prices(client, MARKET_DATA_START_DATE)
+    rates = load_exchange_rates(client, MARKET_DATA_START_DATE)
     return prices, rates
 
 
@@ -250,6 +261,13 @@ tqqq_chart = simulation[["date", "tqqq_close", "tqqq_ma200"]].melt(
 fig_tqqq = px.line(tqqq_chart, x="date", y="가격", color="구분", template=PLOT_TEMPLATE)
 fig_tqqq = style_chart(fig_tqqq)
 st.plotly_chart(fig_tqqq, use_container_width=True)
+
+st.subheader("최근 전략 이벤트")
+events = simulation[simulation["events"].astype(str).str.len() > 0][["date", "events", "boxx_value", "tqqq_value", "qld_value"]].tail(12)
+if events.empty:
+    st.caption("아직 기록된 전략 이벤트가 없습니다.")
+else:
+    st.dataframe(events, use_container_width=True, hide_index=True)
 
 st.subheader("데이터 보유 현황")
 st.dataframe(coverage, use_container_width=True, hide_index=True)
