@@ -78,10 +78,45 @@ st.markdown(
 PLOT_TEMPLATE = "plotly_dark"
 PLOT_BG = "#182235"
 PAGE_BG = "#101827"
+TEXT_COLOR = "#f8fafc"
+MUTED_TEXT_COLOR = "#dbeafe"
 
 
 def won(value: float | int) -> str:
     return f"{round(value):,}원"
+
+
+def style_chart(fig):
+    fig.update_layout(
+        paper_bgcolor=PAGE_BG,
+        plot_bgcolor=PLOT_BG,
+        font_color=TEXT_COLOR,
+        legend=dict(
+            font=dict(color=TEXT_COLOR, size=13),
+            title=dict(font=dict(color=TEXT_COLOR, size=13)),
+            bgcolor="rgba(24, 34, 53, 0.88)",
+            bordercolor="#475569",
+            borderwidth=1,
+        ),
+        xaxis=dict(
+            title_font=dict(color=TEXT_COLOR),
+            tickfont=dict(color=MUTED_TEXT_COLOR),
+            gridcolor="#334155",
+            zerolinecolor="#475569",
+        ),
+        yaxis=dict(
+            title_font=dict(color=TEXT_COLOR),
+            tickfont=dict(color=MUTED_TEXT_COLOR),
+            gridcolor="#334155",
+            zerolinecolor="#475569",
+        ),
+        hoverlabel=dict(
+            bgcolor="#0f172a",
+            bordercolor="#64748b",
+            font=dict(color=TEXT_COLOR),
+        ),
+    )
+    return fig
 
 
 @st.cache_data(ttl=600)
@@ -171,7 +206,7 @@ asset_chart = simulation[["date", "couple_total"]].melt(
     value_name="금액",
 )
 fig_total = px.line(asset_chart, x="date", y="금액", color="구분", template=PLOT_TEMPLATE)
-fig_total.update_layout(paper_bgcolor=PAGE_BG, plot_bgcolor=PLOT_BG, font_color="#f8fafc")
+fig_total = style_chart(fig_total)
 st.plotly_chart(fig_total, use_container_width=True)
 
 st.subheader("종목별 자산 변화")
@@ -187,7 +222,7 @@ name_map = {
 }
 asset_by_symbol["자산"] = asset_by_symbol["자산"].map(name_map)
 fig_symbols = px.area(asset_by_symbol, x="date", y="금액", color="자산", template=PLOT_TEMPLATE)
-fig_symbols.update_layout(paper_bgcolor=PAGE_BG, plot_bgcolor=PLOT_BG, font_color="#f8fafc")
+fig_symbols = style_chart(fig_symbols)
 st.plotly_chart(fig_symbols, use_container_width=True)
 
 st.subheader("자산군별 변화")
@@ -203,7 +238,7 @@ group_map = {
 }
 asset_group["자산군"] = asset_group["자산군"].map(group_map)
 fig_groups = px.line(asset_group, x="date", y="금액", color="자산군", template=PLOT_TEMPLATE)
-fig_groups.update_layout(paper_bgcolor=PAGE_BG, plot_bgcolor=PLOT_BG, font_color="#f8fafc")
+fig_groups = style_chart(fig_groups)
 st.plotly_chart(fig_groups, use_container_width=True)
 
 st.subheader("TQQQ 종가와 200일선")
@@ -213,7 +248,7 @@ tqqq_chart = simulation[["date", "tqqq_close", "tqqq_ma200"]].melt(
     value_name="가격",
 )
 fig_tqqq = px.line(tqqq_chart, x="date", y="가격", color="구분", template=PLOT_TEMPLATE)
-fig_tqqq.update_layout(paper_bgcolor=PAGE_BG, plot_bgcolor=PLOT_BG, font_color="#f8fafc")
+fig_tqqq = style_chart(fig_tqqq)
 st.plotly_chart(fig_tqqq, use_container_width=True)
 
 st.subheader("데이터 보유 현황")
@@ -239,7 +274,7 @@ with st.expander("운영 메모"):
         """
         - 매일 종가 수집은 GitHub Actions가 `scripts/collect_market_data.py`를 실행하는 방식입니다.
         - 화면은 본인/아내를 나누지 않고 부부 합산 자산만 표시합니다.
-        - TQQQ 200일선은 시작일 이전 데이터까지 포함해 계산하고, 화면에는 2026-06-15 이후만 표시합니다.
+        - TQQQ 200일선은 저장된 TQQQ 종가로 직접 계산합니다. 데이터 제공처에서 200일선을 별도 지표로 받는 방식은 아직 사용하지 않습니다.
         - 3일 분할매수와 거래내역 전체 저장은 다음 단계에서 Python 엔진에 더 정밀하게 확장해야 합니다.
         """
     )
